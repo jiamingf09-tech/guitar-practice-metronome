@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 jobs:
-  # ─── Test (runs on all three OS in parallel) ───────────────────────────────
+  # ─── Test (3 OS in parallel) ──────────────────────────────────────────────
   test:
     name: Test – ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -35,7 +35,7 @@ jobs:
       - name: Test
         run: flutter test
 
-  # ─── Build macOS arm64 ────────────────────────────────────────────────────
+  # ─── macOS arm64 ─────────────────────────────────────────────────────────
   build-macos:
     name: Build – macOS arm64
     needs: test
@@ -51,13 +51,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - run: flutter pub get
 
       - name: Build macOS
         run: flutter build macos --release
 
-      - name: Package .app into zip
+      - name: Package
         run: |
           cd build/macos/Build/Products/Release
           zip -r GuitarMetronome-macos-arm64.zip "guitar_metronome.app"
@@ -67,9 +66,9 @@ jobs:
           name: macos-arm64
           path: build/macos/Build/Products/Release/GuitarMetronome-macos-arm64.zip
 
-  # ─── Build Windows x86 ───────────────────────────────────────────────────
+  # ─── Windows x64 ─────────────────────────────────────────────────────────
   build-windows:
-    name: Build – Windows x86_64
+    name: Build – Windows x64
     needs: test
     runs-on: windows-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -83,13 +82,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - run: flutter pub get
 
       - name: Build Windows
         run: flutter build windows --release
 
-      - name: Package into zip
+      - name: Package
         shell: pwsh
         run: |
           Compress-Archive -Path build\windows\x64\runner\Release\* `
@@ -100,7 +98,7 @@ jobs:
           name: windows-x64
           path: GuitarMetronome-windows-x64.zip
 
-  # ─── Build Linux x64 ─────────────────────────────────────────────────────
+  # ─── Linux x64 ───────────────────────────────────────────────────────────
   build-linux:
     name: Build – Linux x64
     needs: test
@@ -123,13 +121,12 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Install dependencies
-        run: flutter pub get
+      - run: flutter pub get
 
       - name: Build Linux
         run: flutter build linux --release
 
-      - name: Package into tar.gz
+      - name: Package
         run: |
           tar -czf GuitarMetronome-linux-x64.tar.gz \
             -C build/linux/x64/release/bundle .
@@ -139,10 +136,76 @@ jobs:
           name: linux-x64
           path: GuitarMetronome-linux-x64.tar.gz
 
-  # ─── Create GitHub Release ────────────────────────────────────────────────
+  # ─── Android APK ─────────────────────────────────────────────────────────
+  build-android:
+    name: Build – Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Rename artifact
+        run: cp build/app/outputs/flutter-apk/app-release.apk GuitarMetronome-android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: GuitarMetronome-android.apk
+
+  # ─── iOS (unsigned) ──────────────────────────────────────────────────────
+  build-ios:
+    name: Build – iOS (unsigned)
+    needs: test
+    runs-on: macos-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r GuitarMetronome-ios-unsigned.ipa Payload/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned
+          path: GuitarMetronome-ios-unsigned.ipa
+
+  # ─── GitHub Release ───────────────────────────────────────────────────────
   release:
     name: Release ${{ github.ref_name }}
-    needs: [build-macos, build-windows, build-linux]
+    needs: [build-macos, build-windows, build-linux, build-android, build-ios]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -162,13 +225,13 @@ jobs:
           body: |
             ## Guitar Metronome ${{ github.ref_name }}
 
-            Cross-platform metronome for guitar practice — macOS · Windows · Linux.
+            Cross-platform metronome for guitar practice — macOS · Windows · Linux · Android · iOS.
 
             ### Features
-            - Adjustable BPM (20–240) with slider and +/− buttons
+            - Adjustable BPM (30–300) with slider and +/− buttons
             - Tap tempo
-            - Time signatures (2/4 · 3/4 · 4/4 · 6/8)
-            - Subdivisions (quarter · eighth · triplet · sixteenth)
+            - Time signatures (4/4 · 3/4 · 6/8 · 5/4)
+            - Subdivisions (quarter · eighth · triplet · sixteenth · mixed)
             - Count-in (1–4 bars)
             - Speed trainer (auto BPM ramp)
             - Silent bars (gap click)
@@ -182,9 +245,16 @@ jobs:
             | macOS arm64 | `GuitarMetronome-macos-arm64.zip` |
             | Windows x64 | `GuitarMetronome-windows-x64.zip` |
             | Linux x64 | `GuitarMetronome-linux-x64.tar.gz` |
+            | Android | `GuitarMetronome-android.apk` |
+            | iOS (unsigned) | `GuitarMetronome-ios-unsigned.ipa` |
+
+            > **macOS:** Right-click → Open on first launch (app is not notarized).
+            > **iOS:** Requires sideloading via AltStore or Sideloadly.
           files: |
             artifacts/macos-arm64/GuitarMetronome-macos-arm64.zip
             artifacts/windows-x64/GuitarMetronome-windows-x64.zip
             artifacts/linux-x64/GuitarMetronome-linux-x64.tar.gz
+            artifacts/android-apk/GuitarMetronome-android.apk
+            artifacts/ios-unsigned/GuitarMetronome-ios-unsigned.ipa
           draft: false
           prerelease: false
