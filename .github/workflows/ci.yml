@@ -1,0 +1,190 @@
+name: CI / Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─── Test (runs on all three OS in parallel) ───────────────────────────────
+  test:
+    name: Test – ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  # ─── Build macOS arm64 ────────────────────────────────────────────────────
+  build-macos:
+    name: Build – macOS arm64
+    needs: test
+    runs-on: macos-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Package .app into zip
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r GuitarMetronome-macos-arm64.zip "guitar_metronome.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: build/macos/Build/Products/Release/GuitarMetronome-macos-arm64.zip
+
+  # ─── Build Windows x86 ───────────────────────────────────────────────────
+  build-windows:
+    name: Build – Windows x86_64
+    needs: test
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Package into zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* `
+            -DestinationPath GuitarMetronome-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: GuitarMetronome-windows-x64.zip
+
+  # ─── Build Linux x64 ─────────────────────────────────────────────────────
+  build-linux:
+    name: Build – Linux x64
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.x"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Package into tar.gz
+        run: |
+          tar -czf GuitarMetronome-linux-x64.tar.gz \
+            -C build/linux/x64/release/bundle .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: GuitarMetronome-linux-x64.tar.gz
+
+  # ─── Create GitHub Release ────────────────────────────────────────────────
+  release:
+    name: Release ${{ github.ref_name }}
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Guitar Metronome ${{ github.ref_name }}
+          body: |
+            ## Guitar Metronome ${{ github.ref_name }}
+
+            Cross-platform metronome for guitar practice — macOS · Windows · Linux.
+
+            ### Features
+            - Adjustable BPM (20–240) with slider and +/− buttons
+            - Tap tempo
+            - Time signatures (2/4 · 3/4 · 4/4 · 6/8)
+            - Subdivisions (quarter · eighth · triplet · sixteenth)
+            - Count-in (1–4 bars)
+            - Speed trainer (auto BPM ramp)
+            - Silent bars (gap click)
+            - Practice timer
+            - Local presets
+            - English / 中文 UI
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | macOS arm64 | `GuitarMetronome-macos-arm64.zip` |
+            | Windows x64 | `GuitarMetronome-windows-x64.zip` |
+            | Linux x64 | `GuitarMetronome-linux-x64.tar.gz` |
+          files: |
+            artifacts/macos-arm64/GuitarMetronome-macos-arm64.zip
+            artifacts/windows-x64/GuitarMetronome-windows-x64.zip
+            artifacts/linux-x64/GuitarMetronome-linux-x64.tar.gz
+          draft: false
+          prerelease: false
